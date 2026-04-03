@@ -184,7 +184,8 @@ userSchema.methods.noMultiPictureUpgrade = function noMultiPictureUpgrade() {
     this.profile.picture = url;
   }
 };
-// Helper method for clearing 2FA code fields (after use or expiration)
+
+// Helper method for clearing 2FA code fields
 userSchema.methods.clearTwoFactorCode = function clearTwoFactorCode() {
   this.twoFactorCode = undefined;
   this.twoFactorExpires = undefined;
@@ -192,10 +193,13 @@ userSchema.methods.clearTwoFactorCode = function clearTwoFactorCode() {
 };
 
 // Helper methods for creating hashed IP addresses
-// This is used to prevent CSRF attacks by ensuring that the token is valid for
-// the IP address it was generated from
 userSchema.statics.hashIP = function hashIP(ip) {
   return crypto.createHash('sha256').update(ip).digest('hex');
+};
+
+// NEW: hash token/code before storing
+userSchema.statics.hashToken = function hashToken(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
 };
 
 // Helper methods for token generation
@@ -211,51 +215,57 @@ userSchema.statics.generateCode = function generateCode() {
 // Helper methods for token verification
 userSchema.methods.verifyTokenAndIp = function verifyTokenAndIp(token, ip, tokenType) {
   const hashedIp = this.constructor.hashIP(ip);
+  const hashedToken = this.constructor.hashToken(token);
   const tokenField = `${tokenType}Token`;
   const ipHashField = `${tokenType}IpHash`;
   const expiresField = `${tokenType}Expires`;
 
-  // Comparing tokens in a timing-safe manner
-  // This is to harden against timing attacks (CWE-208: Observable Timing Discrepancy)
   try {
-    // First check if we have all required values
     if (!this[tokenField] || !token || !this[ipHashField] || !hashedIp) {
       return false;
     }
 
-    // For plain string tokens, use Buffer.from without 'hex'
-    const storedToken = Buffer.from(this[tokenField]);
-    const inputToken = Buffer.from(token);
+    const storedToken = Buffer.from(this[tokenField], 'hex');
+    const inputToken = Buffer.from(hashedToken, 'hex');
 
-    // Ensure both buffers are the same length before comparing
     if (storedToken.length !== inputToken.length) {
       return false;
     }
 
-    return crypto.timingSafeEqual(storedToken, inputToken) && this[ipHashField] === hashedIp && this[expiresField] > Date.now();
+    return crypto.timingSafeEqual(storedToken, inputToken)
+      && this[ipHashField] === hashedIp
+      && this[expiresField] > Date.now();
   } catch (err) {
     console.log(err);
     return false;
   }
 };
 
-// Helper method for code verification (6-digit codes)
+// Helper method for code verification
 userSchema.methods.verifyCodeAndIp = function verifyCodeAndIp(code, ip, codeType) {
   const hashedIp = this.constructor.hashIP(ip);
+  const hashedCode = this.constructor.hashToken(code);
   const codeField = `${codeType}Code`;
   const ipHashField = `${codeType}IpHash`;
   const expiresField = `${codeType}Expires`;
+
   try {
     if (!this[codeField] || !code || !this[ipHashField] || !hashedIp) {
       return false;
     }
-    const storedCode = Buffer.from(this[codeField]);
-    const inputCode = Buffer.from(code);
+
+    const storedCode = Buffer.from(this[codeField], 'hex');
+    const inputCode = Buffer.from(hashedCode, 'hex');
+
     if (storedCode.length !== inputCode.length) {
       return false;
     }
-    return crypto.timingSafeEqual(storedCode, inputCode) && this[ipHashField] === hashedIp && this[expiresField] > Date.now();
-  } catch {
+
+    return crypto.timingSafeEqual(storedCode, inputCode)
+      && this[ipHashField] === hashedIp
+      && this[expiresField] > Date.now();
+  } catch (err) {
+    console.log(err);
     return false;
   }
 };
