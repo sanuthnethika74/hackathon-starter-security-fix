@@ -229,7 +229,7 @@ app.post('/login/2fa/totp', login2FALimiter, userController.postTotpVerify);
 app.post('/login/webauthn-start', loginLimiter, webauthnController.postLoginStart);
 app.get('/login/webauthn-start', (req, res) => res.redirect('/login')); // webauthn-start requires a POST
 app.post('/login/webauthn-verify', loginLimiter, webauthnController.postLoginVerify);
-app.get('/logout', userController.logout);
+app.post('/logout', userController.logout);
 app.get('/forgot', userController.getForgot);
 app.post('/forgot', strictLimiter, userController.postForgot);
 app.get('/reset/:token', userController.getReset);

@@ -17,10 +17,12 @@ nav.navbar.navbar-expand-lg.navbar-dark.bg-dark
         li.nav-item
           a.nav-link(class=title === 'Contact' ? 'active' : '', href='/contact') Contact
 
-      form.d-flex
+      .d-flex
         if !user
           a.btn.btn-outline-light.me-2(href='/login') Login
           a.btn.btn-primary(href='/signup') Create Account
         else
           a.btn.btn-primary.me-2(href='/account') My Account
-          a.btn.btn-outline-danger(href='/logout') Sign out
+          form.d-inline(action='/logout', method='POST')
+            input(type='hidden', name='_csrf', value=_csrf)
+            button.btn.btn-outline-danger(type='submit') Sign out
