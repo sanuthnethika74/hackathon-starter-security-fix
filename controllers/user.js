@@ -52,10 +52,10 @@ exports.postLogin = async (req, res, next) => {
       }
 
       const token = await User.generateToken();
-      user.loginToken = token;
-      user.loginExpires = Date.now() + 900000; // 15 min
-      user.loginIpHash = User.hashIP(req.ip);
-      await user.save();
+user.loginToken = User.hashToken(token);
+user.loginExpires = Date.now() + 900000;
+user.loginIpHash = User.hashIP(req.ip);
+await user.save();
 
       const mailOptions = {
         to: user.email,
@@ -165,10 +165,10 @@ exports.getSignup = (req, res) => {
  */
 async function sendPasswordlessLoginLinkIfUserExists(user, req) {
   const token = await User.generateToken();
-  user.loginToken = token;
-  user.loginExpires = Date.now() + 900000; // 15 min
-  user.loginIpHash = User.hashIP(req.ip);
-  await user.save();
+user.loginToken = User.hashToken(token);
+user.loginExpires = Date.now() + 900000;
+user.loginIpHash = User.hashIP(req.ip);
+await user.save();
 
   const mailOptions = {
     to: user.email,
@@ -201,10 +201,10 @@ Thank you!\n`,
  */
 async function sendPasswordlessSignupLink(user, req) {
   const token = await User.generateToken();
-  user.loginToken = token;
-  user.loginExpires = Date.now() + 900000; // 15 min
-  user.loginIpHash = User.hashIP(req.ip);
-  await user.save();
+user.loginToken = User.hashToken(token);
+user.loginExpires = Date.now() + 900000;
+user.loginIpHash = User.hashIP(req.ip);
+await user.save();
 
   const mailOptions = {
     to: user.email,
@@ -492,12 +492,13 @@ exports.getLoginByEmail = async (req, res, next) => {
   }
 
   try {
-    const user = await User.findOne({ loginToken: { $eq: req.params.token } });
+    const hashedToken = User.hashToken(req.params.token);
+const user = await User.findOne({ loginToken: { $eq: hashedToken } });
 
-    if (!user || !user.verifyTokenAndIp(user.loginToken, req.ip, 'login')) {
-      req.flash('errors', { msg: 'Invalid or expired login link.' });
-      return res.redirect('/login');
-    }
+if (!user || !user.verifyTokenAndIp(req.params.token, req.ip, 'login')) {
+  req.flash('errors', { msg: 'Invalid or expired login link.' });
+  return res.redirect('/login');
+}
 
     user.emailVerified = true; // Mark email as verified since they also proved ownership
     await user.save();
@@ -530,11 +531,12 @@ exports.getReset = async (req, res, next) => {
       return res.redirect('/forgot');
     }
 
-    const user = await User.findOne({ passwordResetToken: { $eq: req.params.token } });
-    if (!user || !user.verifyTokenAndIp(user.passwordResetToken, req.ip, 'passwordReset')) {
-      req.flash('errors', { msg: 'Invalid or expired password reset link.' });
-      return res.redirect('/forgot');
-    }
+    const hashedToken = User.hashToken(req.params.token);
+const user = await User.findOne({ passwordResetToken: { $eq: hashedToken } });
+if (!user || !user.verifyTokenAndIp(req.params.token, req.ip, 'passwordReset')) {
+  req.flash('errors', { msg: 'Password reset token is invalid or has expired.' });
+  return res.redirect(req.get('Referrer') || '/');
+}
     res.render('account/reset', {
       title: 'Password Reset',
     });
@@ -561,7 +563,7 @@ exports.getVerifyEmailToken = async (req, res, next) => {
   }
 
   try {
-    if (!req.user.verifyTokenAndIp(req.user.emailVerificationToken, req.ip, 'emailVerification')) {
+   if (!req.user.verifyTokenAndIp(req.params.token, req.ip, 'emailVerification')) {
       req.flash('errors', { msg: 'Invalid or expired verification link.' });
       return res.redirect('/account');
     }
@@ -595,10 +597,10 @@ exports.getVerifyEmail = async (req, res, next) => {
 
   try {
     const token = await User.generateToken();
-    req.user.emailVerificationToken = token;
-    req.user.emailVerificationExpires = Date.now() + 900000; // 15 minutes
-    req.user.emailVerificationIpHash = User.hashIP(req.ip);
-    await req.user.save();
+req.user.emailVerificationToken = User.hashToken(token);
+req.user.emailVerificationExpires = Date.now() + 900000;
+req.user.emailVerificationIpHash = User.hashIP(req.ip);
+await req.user.save();
 
     const mailOptions = {
       to: req.user.email,
@@ -650,11 +652,12 @@ exports.postReset = async (req, res, next) => {
   }
 
   try {
-    const user = await User.findOne({ passwordResetToken: { $eq: req.params.token } });
-    if (!user || !user.verifyTokenAndIp(user.passwordResetToken, req.ip, 'passwordReset')) {
-      req.flash('errors', { msg: 'Password reset token is invalid or has expired.' });
-      return res.redirect(user.get('Referrer') || '/');
-    }
+    const hashedToken = User.hashToken(req.params.token);
+const user = await User.findOne({ passwordResetToken: { $eq: hashedToken } });
+if (!user || !user.verifyTokenAndIp(req.params.token, req.ip, 'passwordReset')) {
+  req.flash('errors', { msg: 'Password reset token is invalid or has expired.' });
+  return res.redirect(req.get('Referrer') || '/');
+}
     user.password = req.body.password;
     user.emailVerified = true; // Mark email as verified as well since they proved ownership
     await user.save();
@@ -719,10 +722,10 @@ exports.postForgot = async (req, res, next) => {
     }
 
     const token = await User.generateToken();
-    user.passwordResetToken = token;
-    user.passwordResetExpires = Date.now() + 900000; // 15 minutes
-    user.passwordResetIpHash = User.hashIP(req.ip);
-    await user.save();
+user.passwordResetToken = User.hashToken(token);
+user.passwordResetExpires = Date.now() + 900000;
+user.passwordResetIpHash = User.hashIP(req.ip);
+await user.save();
 
     const mailOptions = {
       to: user.email,
@@ -827,14 +830,13 @@ exports.resendTwoFactorCode = async (req, res, next) => {
       return res.redirect('/login/2fa/totp');
     }
     const currentIpHash = User.hashIP(req.ip);
-    const hasValidCode = user.twoFactorCode && user.twoFactorExpires && user.twoFactorExpires > Date.now() && user.twoFactorIpHash === currentIpHash;
-    const code = hasValidCode ? user.twoFactorCode : User.generateCode();
-    const successMsg = hasValidCode ? 'The verification code has been resent to your email.' : 'A new verification code has been sent to your email.';
-    user.twoFactorCode = code;
-    user.twoFactorExpires = Date.now() + 600000; // fresh 10 min
-    user.twoFactorIpHash = currentIpHash;
-    await user.save();
-    await sendTwoFactorEmail(user.email, code, req, successMsg);
+const code = User.generateCode();
+const successMsg = 'A new verification code has been sent to your email.';
+user.twoFactorCode = User.hashToken(code);
+user.twoFactorExpires = Date.now() + 600000;
+user.twoFactorIpHash = currentIpHash;
+await user.save();
+await sendTwoFactorEmail(user.email, code, req, successMsg);
     res.redirect('/login/2fa');
   } catch (err) {
     next(err);
@@ -863,11 +865,11 @@ exports.getTwoFactor = async (req, res, next) => {
     const hasValidCode = user.twoFactorCode && user.twoFactorExpires && user.twoFactorExpires > Date.now() && user.twoFactorIpHash === User.hashIP(req.ip);
     if (!hasValidCode) {
       const code = User.generateCode();
-      user.twoFactorCode = code;
-      user.twoFactorExpires = Date.now() + 600000; // 10 min
-      user.twoFactorIpHash = User.hashIP(req.ip);
-      await user.save();
-      await sendTwoFactorEmail(user.email, code, req);
+user.twoFactorCode = User.hashToken(code);
+user.twoFactorExpires = Date.now() + 600000;
+user.twoFactorIpHash = User.hashIP(req.ip);
+await user.save();
+await sendTwoFactorEmail(user.email, code, req);
     }
     res.render('account/two-factor', {
       title: 'Two-Factor Authentication',
