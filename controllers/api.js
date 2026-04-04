@@ -11,6 +11,7 @@ const twilioClient = require('twilio')(process.env.TWILIO_SID, process.env.TWILI
 const googledrive = require('@googleapis/drive');
 const googlesheets = require('@googleapis/sheets');
 const validator = require('validator');
+const { decrypt } = require('../utils/crypto');
 const { Configuration: LobConfiguration, LetterEditable, LettersApi, ZipEditable, ZipLookupsApi } = require('@lob/lob-typescript-sdk');
 
 /**
@@ -73,18 +74,25 @@ exports.getFoursquare = async (req, res, next) => {
  */
 exports.getTumblr = async (req, res, next) => {
   const token = req.user.tokens.find((token) => token.kind === 'tumblr');
-  if (!token) throw new Error('No Tumblr token found for user.');
 
-  // Helper function to generate the OAuth 1.0a authHeader for Tumblr API.
-  // This function is not going to making any actual calls to
-  // tumblr's /request_token or /access_token endpoints.
   function getTumblrAuthHeader(url, method) {
-    const oauth = new OAuth('https://www.tumblr.com/oauth/request_token', 'https://www.tumblr.com/oauth/access_token', process.env.TUMBLR_KEY, process.env.TUMBLR_SECRET, '1.0A', null, 'HMAC-SHA1');
-    return oauth.authHeader(url, token.accessToken, token.tokenSecret, method);
+    const oauth = new OAuth(
+      'https://www.tumblr.com/oauth/request_token',
+      'https://www.tumblr.com/oauth/access_token',
+      process.env.TUMBLR_KEY,
+      process.env.TUMBLR_SECRET,
+      '1.0A',
+      null,
+      'HMAC-SHA1',
+    );
+
+    const accessToken = decrypt(token.accessToken);
+    const tokenSecret = decrypt(token.tokenSecret);
+
+    return oauth.authHeader(url, accessToken, tokenSecret, method);
   }
 
   try {
-    // Get user info - requires OAuth
     const userInfoURL = 'https://api.tumblr.com/v2/user/info';
     const userInfoResponse = await fetch(userInfoURL, {
       headers: { Authorization: getTumblrAuthHeader(userInfoURL, 'GET') },
@@ -92,7 +100,6 @@ exports.getTumblr = async (req, res, next) => {
     if (!userInfoResponse.ok) throw new Error('Failed to fetch user info');
     const userInfo = await userInfoResponse.json();
 
-    // Get blog posts (public API, doesn't require OAuth)
     const blogId = 'peacecorps.tumblr.com';
     const postType = 'photo';
     const blogResponse = await fetch(`https://api.tumblr.com/v2/blog/${blogId}/posts/${postType}?api_key=${process.env.TUMBLR_KEY}`);
@@ -116,14 +123,20 @@ exports.getTumblr = async (req, res, next) => {
  */
 exports.getFacebook = async (req, res, next) => {
   const token = req.user.tokens.find((token) => token.kind === 'facebook');
+  const accessToken = decrypt(token.accessToken);
   const secret = process.env.FACEBOOK_SECRET;
-  const appsecretProof = crypto.createHmac('sha256', secret).update(token.accessToken).digest('hex');
+
   try {
-    const response = await fetch(`https://graph.facebook.com/${req.user.facebook}?fields=id,name,email,first_name,last_name,gender,link,locale,timezone&access_token=${token.accessToken}&appsecret_proof=${appsecretProof}`);
+    const appsecretProof = crypto.createHmac('sha256', secret).update(accessToken).digest('hex');
+    const response = await fetch(
+      `https://graph.facebook.com/${req.user.facebook}?fields=id,name,email,first_name,last_name,gender,link,locale,timezone&access_token=${accessToken}&appsecret_proof=${appsecretProof}`,
+    );
+
     if (!response.ok) {
       const error = await response.json();
       throw new Error(error.message || 'Failed to fetch Facebook data');
     }
+
     const profile = await response.json();
     res.render('api/facebook', {
       title: 'Facebook API',
@@ -179,8 +192,8 @@ exports.getGithub = async (req, res, next) => {
   let userEvents;
   if (githubToken) {
     github = new Octokit({
-      auth: req.user.tokens.find((token) => token.kind === 'github').accessToken,
-    });
+  auth: githubToken,
+});
     try {
       ({ data: userInfo } = await github.request('/user'));
       ({ data: userRepos } = await github.repos.listForAuthenticatedUser({
@@ -227,6 +240,7 @@ exports.getGithub = async (req, res, next) => {
 
 exports.getQuickbooks = async (req, res) => {
   const token = req.user.tokens.find((token) => token.kind === 'quickbooks');
+  const accessToken = decrypt(token.accessToken);
   const realmId = req.user.quickbooks;
   const quickbooksAPIMinorVersion = 75;
   const AccountingBaseUrl = 'https://sandbox-quickbooks.api.intuit.com';
@@ -241,7 +255,7 @@ exports.getQuickbooks = async (req, res) => {
   const headers = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    Authorization: `Bearer ${token.accessToken}`,
+    Authorization: `Bearer ${accessToken}`,
   };
 
   try {
@@ -589,13 +603,14 @@ exports.postTwilio = async (req, res) => {
  */
 exports.getTwitch = async (req, res, next) => {
   const token = req.user.tokens.find((token) => token.kind === 'twitch');
-  const twitchID = req.user.twitch;
+const accessToken = decrypt(token.accessToken);
+const twitchID = req.user.twitch;
   const twitchClientID = process.env.TWITCH_CLIENT_ID;
 
   const getUser = async (userID) => {
     const response = await fetch(`https://api.twitch.tv/helix/users?id=${userID}`, {
       headers: {
-        Authorization: `Bearer ${token.accessToken}`,
+        Authorization: `Bearer ${accessToken}`,
         'Client-ID': twitchClientID,
       },
     });
@@ -1174,12 +1189,13 @@ exports.getGoogleMaps = (req, res) => {
 
 exports.getGoogleDrive = (req, res) => {
   const token = req.user.tokens.find((token) => token.kind === 'google');
-  const authObj = new googledrive.auth.OAuth2({
-    access_type: 'offline',
-  });
-  authObj.setCredentials({
-    access_token: token.accessToken,
-  });
+const accessToken = decrypt(token.accessToken);
+const authObj = new googledrive.auth.OAuth2({
+  access_type: 'offline',
+});
+authObj.setCredentials({
+  access_token: accessToken,
+});
   const drive = googledrive.drive({
     version: 'v3',
     auth: authObj,
@@ -1203,12 +1219,13 @@ exports.getGoogleDrive = (req, res) => {
 
 exports.getGoogleSheets = (req, res) => {
   const token = req.user.tokens.find((token) => token.kind === 'google');
-  const authObj = new googlesheets.auth.OAuth2({
-    access_type: 'offline',
-  });
-  authObj.setCredentials({
-    access_token: token.accessToken,
-  });
+const accessToken = decrypt(token.accessToken);
+const authObj = new googlesheets.auth.OAuth2({
+  access_type: 'offline',
+});
+authObj.setCredentials({
+  access_token: accessToken,
+});
 
   const sheets = googlesheets.sheets({
     version: 'v4',
@@ -1431,11 +1448,11 @@ exports.getTrakt = async (req, res, next) => {
   // Determine Trakt token if user is logged in and has linked Trakt
   let traktToken = null;
   if (req.user && req.user.tokens) {
-    const tokenObj = req.user.tokens.find((token) => token.kind === 'trakt');
-    if (tokenObj) {
-      traktToken = tokenObj.accessToken;
-    }
+  const tokenObj = req.user.tokens.find((token) => token.kind === 'trakt');
+  if (tokenObj) {
+    traktToken = decrypt(tokenObj.accessToken);
   }
+}
 
   // Only fetch user info/history if logged in and linked Trakt
   if (req.user) {

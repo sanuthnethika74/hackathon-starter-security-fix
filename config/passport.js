@@ -11,6 +11,7 @@ const OAuthStrategy = require('passport-oauth1');
 const OAuth2Strategy = require('passport-oauth2');
 const { OAuth } = require('oauth');
 const validator = require('validator');
+const { encrypt, decrypt } = require('../utils/crypto');
 
 const User = require('../models/User');
 
@@ -79,7 +80,11 @@ async function handleAuthLogin(req, accessToken, refreshToken, providerName, par
       user = await saveOAuth2UserTokens(req, accessToken, refreshToken, params.expires_in, refreshTokenExpiration, providerName, tokenConfig);
     } else {
       user = await User.findById(req.user.id);
-      user.tokens.push({ kind: providerName, accessToken, ...(tokenSecret && { tokenSecret }) });
+      user.tokens.push({
+  kind: providerName,
+  accessToken: encrypt(accessToken),
+  ...(tokenSecret && { tokenSecret: encrypt(tokenSecret) }),
+});
     }
     user[providerName] = providerProfile.id;
     user.profile.name = user.profile.name || providerProfile.name;
@@ -126,7 +131,11 @@ async function handleAuthLogin(req, accessToken, refreshToken, providerName, par
   if (oauth2provider) {
     await saveOAuth2UserTokens(req, accessToken, refreshToken, params.expires_in, refreshTokenExpiration, providerName, tokenConfig);
   } else {
-    user.tokens.push({ kind: providerName, accessToken, ...(tokenSecret && { tokenSecret }) });
+    user.tokens.push({
+  kind: providerName,
+  accessToken: encrypt(accessToken),
+  ...(tokenSecret && { tokenSecret: encrypt(tokenSecret) }),
+});
   }
   user.profile.name = providerProfile.name;
   user.profile.gender = providerProfile.gender;
@@ -188,34 +197,37 @@ async function saveOAuth2UserTokens(req, accessToken, refreshToken, accessTokenE
   try {
     let user = await User.findById(req.user._id);
     if (!user) {
-      // If user is not found in DB, use the one from the request because we are creating a new user
       ({ user } = req);
     }
+
     const providerToken = user.tokens.find((token) => token.kind === providerName);
+
     if (providerToken) {
-      providerToken.accessToken = accessToken;
+      providerToken.accessToken = encrypt(accessToken);
+
       if (accessTokenExpiration) {
         providerToken.accessTokenExpires = new Date(Date.now() + accessTokenExpiration * 1000).toISOString();
       } else {
         delete providerToken.accessTokenExpires;
       }
+
       if (refreshToken) {
-        providerToken.refreshToken = refreshToken;
+        providerToken.refreshToken = encrypt(refreshToken);
       }
+
       if (refreshTokenExpiration) {
         providerToken.refreshTokenExpires = new Date(Date.now() + refreshTokenExpiration * 1000).toISOString();
       } else if (refreshToken) {
-        // Only delete refresh token expiration if we got a new refresh token and don't have an expiration for it
         delete providerToken.refreshTokenExpires;
       }
     } else {
       const newToken = {
         kind: providerName,
-        accessToken,
+        accessToken: encrypt(accessToken),
         ...(accessTokenExpiration && {
           accessTokenExpires: new Date(Date.now() + accessTokenExpiration * 1000).toISOString(),
         }),
-        ...(refreshToken && { refreshToken }),
+        ...(refreshToken && { refreshToken: encrypt(refreshToken) }),
         ...(refreshTokenExpiration && {
           refreshTokenExpires: new Date(Date.now() + refreshTokenExpiration * 1000).toISOString(),
         }),
@@ -924,18 +936,25 @@ exports.isAuthorized = async (req, res, next) => {
         }
         try {
           const newTokens = await new Promise((resolve, reject) => {
-            refresh.requestNewAccessToken(`${provider}`, token.refreshToken, (err, accessToken, refreshToken, params) => {
+            const decryptedRefreshToken = decrypt(token.refreshToken);
+
+refresh.requestNewAccessToken(`${provider}`, decryptedRefreshToken, (err, accessToken, refreshToken, params) => {
               if (err) reject(err);
               resolve({ accessToken, refreshToken, params });
             });
           });
 
           req.user.tokens.forEach((tokenObject) => {
-            if (tokenObject.kind === provider) {
-              tokenObject.accessToken = newTokens.accessToken;
-              if (newTokens.params.expires_in) tokenObject.accessTokenExpires = new Date(Date.now() + newTokens.params.expires_in * 1000).toISOString();
-            }
-          });
+  if (tokenObject.kind === provider) {
+    tokenObject.accessToken = encrypt(newTokens.accessToken);
+    if (newTokens.refreshToken) {
+      tokenObject.refreshToken = encrypt(newTokens.refreshToken);
+    }
+    if (newTokens.params.expires_in) {
+      tokenObject.accessTokenExpires = new Date(Date.now() + newTokens.params.expires_in * 1000).toISOString();
+    }
+  }
+});
 
           await req.user.save();
           return next();
